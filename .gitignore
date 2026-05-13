@@ -1,0 +1,34 @@
+# 数据
+data/
+data_and_sample_submission/
+data_and_sample_submission.zip
+task_log_sample.zip
+task_log_sample_dir/
+
+# 模型权重
+checkpoints/
+models/
+
+# 运行时生成
+logs/
+repos/submission/
+*.pt
+*.hdf5
+*.h5
+
+# 环境
+env/
+__pycache__/
+*.pyc
+.venv/
+pde_venv/
+
+# 包含 guandi 的所有内容
+*guandi*
+*guandi*/
+
+# 其他
+*.bak_*
+*.tmp
+
+repos/baselines/

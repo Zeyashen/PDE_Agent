@@ -1,7 +1,7 @@
 # guandi_agent
 
 PDE Neural Operator Research Agent — AI4S CNS Challenge Task 1 (1D Burgers).
-目前我们的测试使用PI-DeepONet, 做了8迭代的测试。logs记录
+目前我们的测试使用PI-DeepONet, 做了8迭代的测试。logs记录./logs/agent_test.log
 
 ## 目录
 

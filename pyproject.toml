@@ -1,0 +1,9 @@
+[project]
+name = "guandi_agent"
+version = "0.1.0"
+description = "PDE Neural Operator Research Agent for AI4S CNS Challenge"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

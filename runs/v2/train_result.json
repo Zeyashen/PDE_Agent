@@ -1,0 +1,10 @@
+{
+  "status": "completed",
+  "ckpt_path": "/mimer/NOBACKUP/groups/phy_geo/PDE_Agent/guandi_agent/runs/v2/best_model.pt",
+  "train_time": 391.5171015262604,
+  "best_val_loss": Infinity,
+  "best_epoch": 0,
+  "n_epochs_run": 72,
+  "error_msg": ""
+}}error_msg": ""
+}

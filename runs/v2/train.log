@@ -1,0 +1,31 @@
+2026-05-13 21:09:33 | INFO | [cli] config=/mimer/NOBACKUP/groups/phy_geo/PDE_Agent/guandi_agent/runs/v2/config.yaml
+2026-05-13 21:09:34 | INFO | [cli] config=/mimer/NOBACKUP/groups/phy_geo/PDE_Agent/guandi_agent/runs/v2/config.yaml
+2026-05-13 21:09:39 | INFO | [cli] config=/mimer/NOBACKUP/groups/phy_geo/PDE_Agent/guandi_agent/runs/v2/config.yaml
+2026-05-13 21:09:44 | INFO | [cli] config=/mimer/NOBACKUP/groups/phy_geo/PDE_Agent/guandi_agent/runs/v2/config.yaml
+2026-05-13 21:09:44 | INFO | ============================================================
+2026-05-13 21:09:44 | INFO | [train] exp_id=v2  out_dir=/mimer/NOBACKUP/groups/phy_geo/PDE_Agent/guandi_agent/runs/v2
+2026-05-13 21:09:44 | INFO | [train] device=cuda:0  DDP world=4
+2026-05-13 21:09:44 | INFO | [train] strategy=pi_deeponet  loss=relative_l2  scheduler=cosine
+2026-05-13 21:09:44 | INFO | [train] init_from=scratch
+2026-05-13 21:09:47 | INFO | [data] T_r=?  X_r=?  train=2080  loaded in 2.6s
+2026-05-13 21:09:47 | INFO | [model] scratch  params=1,054,977  arch=DeepONet1d  modes=16  width=64
+2026-05-13 21:09:53 | INFO | [loop] epochs=100  patience=30  start_epoch=1
+2026-05-13 21:10:00 | INFO | Epoch    1/100 | train=20.996809 | val=0.375355 | rel_mse=0.433611 | lr=1.00e-03 | 6s ← best
+2026-05-13 21:10:13 | INFO | Epoch    5/100 | train=4.779792 | val=0.027737 | rel_mse=0.140395 | lr=9.94e-04 | 20s  (no_improve 2/30)
+2026-05-13 21:10:37 | INFO | Epoch   10/100 | train=4.448056 | val=0.018583 | rel_mse=0.096466 | lr=9.76e-04 | 44s ← best
+2026-05-13 21:11:17 | INFO | Epoch   15/100 | train=4.660960 | val=0.013789 | rel_mse=0.068839 | lr=9.46e-04 | 83s  (no_improve 4/30)
+2026-05-13 21:11:41 | INFO | Epoch   20/100 | train=4.825060 | val=0.023887 | rel_mse=0.107406 | lr=9.05e-04 | 108s  (no_improve 2/30)
+2026-05-13 21:12:06 | INFO | Epoch   25/100 | train=4.745684 | val=0.014000 | rel_mse=0.077301 | lr=8.54e-04 | 132s  (no_improve 7/30)
+2026-05-13 21:12:36 | INFO | Epoch   30/100 | train=4.459842 | val=0.021265 | rel_mse=0.082737 | lr=7.94e-04 | 163s  (no_improve 4/30)
+2026-05-13 21:13:07 | INFO | Epoch   35/100 | train=4.732273 | val=0.013835 | rel_mse=0.065419 | lr=7.27e-04 | 194s  (no_improve 4/30)
+2026-05-13 21:13:21 | INFO | Epoch   40/100 | train=4.752630 | val=0.015560 | rel_mse=0.069651 | lr=6.55e-04 | 208s  (no_improve 9/30)
+2026-05-13 21:13:41 | INFO | Epoch   45/100 | train=4.233891 | val=0.015458 | rel_mse=0.064147 | lr=5.79e-04 | 227s  (no_improve 3/30)
+2026-05-13 21:14:25 | INFO | Epoch   50/100 | train=4.466513 | val=0.015363 | rel_mse=0.088020 | lr=5.01e-04 | 272s  (no_improve 8/30)
+2026-05-13 21:15:05 | INFO | Epoch   55/100 | train=4.428637 | val=0.015017 | rel_mse=0.069049 | lr=4.22e-04 | 312s  (no_improve 13/30)
+2026-05-13 21:15:20 | INFO | Epoch   60/100 | train=4.704314 | val=0.026033 | rel_mse=0.115842 | lr=3.46e-04 | 326s  (no_improve 18/30)
+2026-05-13 21:15:39 | INFO | Epoch   65/100 | train=4.514720 | val=0.016735 | rel_mse=0.083521 | lr=2.74e-04 | 345s  (no_improve 23/30)
+2026-05-13 21:16:08 | INFO | Epoch   70/100 | train=4.431033 | val=0.043055 | rel_mse=0.178356 | lr=2.07e-04 | 375s  (no_improve 28/30)
+2026-05-13 21:16:20 | INFO | [loop] early stop: no_improve 30
+2026-05-13 21:16:20 | INFO | ============================================================
+2026-05-13 21:16:20 | INFO | [train] early_stopped | total=386.6s (6.4min) | best@epoch42 val=0.010409
+2026-05-13 21:16:20 | INFO | [train] ckpt: /mimer/NOBACKUP/groups/phy_geo/PDE_Agent/guandi_agent/runs/v2/best_model.pt

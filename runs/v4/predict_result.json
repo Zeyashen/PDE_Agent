@@ -1,0 +1,20 @@
+{
+  "status": "completed",
+  "pred_path": "/mimer/NOBACKUP/groups/phy_geo/PDE_Agent/guandi_agent/runs/v4/task1_pred.hdf5",
+  "inference_time": 0.5215930938720703,
+  "has_gt": true,
+  "metrics": {
+    "seg1_rel_mse": 0.37439051270484924,
+    "seg1_score": 0.05598675869344616,
+    "seg2_rel_mse": 0.1833454817533493,
+    "seg2_score": 15.98603243963574,
+    "seg3_rmse": 0.07443039864301682,
+    "seg3_fd": 0.058726318180561066,
+    "seg3_lorentzian": 57.32945677929483,
+    "seg3_frechet": 49.8278579882725,
+    "seg3_score": 57.32945677929483,
+    "total_score": 32.675233189229715
+  },
+  "init_diff_max": 0.0,
+  "error_msg": ""
+}

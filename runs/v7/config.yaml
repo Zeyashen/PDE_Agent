@@ -1,0 +1,46 @@
+exp_id: v7
+parent_exp_id: v4
+rationale: 增大batch_size至128提升训练稳定性，同时提高ics_weight至50强化初始条件约束，双管齐下改善长程外推（Seg3）的物理一致性与泛化能力
+description: ''
+model:
+  architecture: DeepONet1d
+  modes: 16
+  width: 64
+  n_layers: 4
+  window_size: 10
+  p_dim: 128
+  hidden_dim: 256
+  branch_layers: 8
+  trunk_layers: 8
+data:
+  hdf5_path: /mimer/NOBACKUP/groups/phy_geo/PDE_Agent/data/1D/Burgers/Train/1D_Burgers_Sols_Nu0.001.hdf5
+  val_hdf5_path: /mimer/NOBACKUP/groups/phy_geo/PDE_Agent/data_and_sample_submission/train_val_test_init/task1_val.hdf5
+  test_hdf5_path: /mimer/NOBACKUP/groups/phy_geo/PDE_Agent/data_and_sample_submission/train_val_test_init/task1_test.hdf5
+  n_samples: 2000
+  reduced_resolution_t: 5
+  reduced_resolution: 4
+  train_ratio: 1.0
+  num_workers: 4
+training:
+  epochs: 200
+  batch_size: 128
+  lr: 0.001
+  weight_decay: 0.001
+  patience: 30
+  grad_clip: 1.0
+  loss_name: relative_l2
+  loss_kwargs: {}
+  scheduler_name: cosine
+  scheduler_kwargs: {}
+  strategy_name: pi_deeponet
+  pushforward_steps: 3
+  pushforward_weight: 0.5
+  ics_weight: 50.0
+  init_from: resume
+  init_ckpt: /mimer/NOBACKUP/groups/phy_geo/PDE_Agent/guandi_agent/runs/v4/best_model.pt
+inference:
+  use_mean_correction: false
+  infer_batch: 256
+  input_path: /mimer/NOBACKUP/groups/phy_geo/PDE_Agent/data_and_sample_submission/train_val_test_init/task1_val.hdf5
+  total_steps: 200
+out_dir: /mimer/NOBACKUP/groups/phy_geo/PDE_Agent/guandi_agent/runs/v7

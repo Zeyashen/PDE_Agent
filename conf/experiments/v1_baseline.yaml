@@ -1,0 +1,48 @@
+exp_id: v1_baseline
+parent_exp_id: null
+rationale: |
+  初始 baseline. 采用真实 200 步时间轴, 自训 FNO1d (width=64),
+  pushforward_steps=3, mean_correction.
+description: 真实轴 FNO + pushforward + mean_correction
+out_dir: /mimer/NOBACKUP/groups/phy_geo/PDE_Agent/guandi_agent/runs/_manual/v1_baseline
+
+model:
+  architecture: FNO1d
+  modes: 16
+  width: 64
+  n_layers: 4
+  window_size: 10
+
+data:
+  hdf5_path: /mimer/NOBACKUP/groups/phy_geo/PDE_Agent/data/1D/Burgers/Train/1D_Burgers_Sols_Nu0.001.hdf5
+  val_hdf5_path: /mimer/NOBACKUP/groups/phy_geo/PDE_Agent/data_and_sample_submission/train_val_test_init/task1_val.hdf5
+  test_hdf5_path: /mimer/NOBACKUP/groups/phy_geo/PDE_Agent/data_and_sample_submission/train_val_test_init/task1_test.hdf5
+  n_samples: 8000
+  reduced_resolution_t: 5
+  reduced_resolution: 4
+  train_ratio: 0.9
+  num_workers: 4
+
+training:
+  epochs: 50
+  batch_size: 64
+  lr: 0.001
+  weight_decay: 0.0001
+  patience: 30
+  grad_clip: 1.0
+  loss_name: relative_l2
+  loss_kwargs: {}
+  scheduler_name: cosine
+  scheduler_kwargs:
+    eta_min: 0.00001
+  strategy_name: pushforward
+  pushforward_steps: 3
+  pushforward_weight: 0.5
+  init_from: scratch
+  init_ckpt: null
+
+inference:
+  use_mean_correction: true
+  infer_batch: 256
+  input_path: /mimer/NOBACKUP/groups/phy_geo/PDE_Agent/data_and_sample_submission/train_val_test_init/task1_val.hdf5
+  total_steps: 200

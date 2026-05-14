@@ -1,0 +1,18 @@
+{
+  "exp_id": "v0_official",
+  "ckpt_path": "/mimer/NOBACKUP/groups/phy_geo/PDE_Agent/checkpoints/1D_Burgers/1D_Burgers_Sols_Nu0.001_FNO.pt",
+  "inference_time": 0.5418665409088135,
+  "metrics": {
+    "seg1_score": 2.043971699979373,
+    "seg1_rel_mse": 0.19451376795768738,
+    "seg2_score": 4.5701222172621065,
+    "seg2_rel_mse": 0.3085630238056183,
+    "seg3_score": 59.76158686004351,
+    "seg3_rmse": 0.06733156740665436,
+    "seg3_lorentzian": 59.76158686004351,
+    "seg3_frechet": 10.042195140984699,
+    "seg3_winner": "lorentzian",
+    "total_score": 31.534316909332123,
+    "n_val_samples": 20
+  }
+}

@@ -1,0 +1,31 @@
+paths:
+  root_dir: "/mimer/NOBACKUP/groups/phy_geo/PDE_Agent"
+  work_dir: "/mimer/NOBACKUP/groups/phy_geo/PDE_Agent/guandi_agent"
+  # 关键：指定虚拟环境的 Python 解释器
+  python_bin: "/mimer/NOBACKUP/groups/phy_geo/PDE_Agent/env/pde_venv/bin/python"
+  # 切换架构：FNO用v1_deeponet.yaml，DeepONet用v1_deeponet.yaml
+  baseline_config: "/mimer/NOBACKUP/groups/phy_geo/PDE_Agent/guandi_agent/conf/experiments/v1_deeponet.yaml"
+  
+  data_dir: "/mimer/NOBACKUP/groups/phy_geo/PDE_Agent/data"
+  models_dir: "/mimer/NOBACKUP/groups/phy_geo/PDE_Agent/models"
+  logs_dir: "/mimer/NOBACKUP/groups/phy_geo/PDE_Agent/guandi_agent/logs"
+  runs_dir: "/mimer/NOBACKUP/groups/phy_geo/PDE_Agent/guandi_agent/runs"
+
+llm:
+  # 指向你部署 Qwen3-14B 的绝对路径
+  model_path: "/mimer/NOBACKUP/groups/phy_geo/PDE_Agent/models/Qwen3-14B"
+  gpu_device: "0"  # 给 LLM 用的一张卡
+
+training:
+  gpu_devices: "0,1,2,3" # 给训练任务用的一张卡
+
+baseline_official:
+  enabled: true
+  exp_id: "v0_official"
+  ckpt_path: "/mimer/NOBACKUP/groups/phy_geo/PDE_Agent/models/official_weights.pth"  # 官方权重路径
+  inference:
+    use_mean_correction: true
+    infer_batch: 256
+    input_path: "/mimer/NOBACKUP/groups/phy_geo/PDE_Agent/data_and_sample_submission/train_val_test_init/task1_val.hdf5"
+    total_steps: 200
+

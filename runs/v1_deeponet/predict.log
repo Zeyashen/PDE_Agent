@@ -1,0 +1,17 @@
+2026-05-13 21:08:17 | INFO | ============================================================
+2026-05-13 21:08:17 | INFO | [predict] exp_id=v1_deeponet
+2026-05-13 21:08:17 | INFO | [predict] ckpt=/mimer/NOBACKUP/groups/phy_geo/PDE_Agent/guandi_agent/runs/v1_deeponet/best_model.pt
+2026-05-13 21:08:17 | INFO | [predict] input=/mimer/NOBACKUP/groups/phy_geo/PDE_Agent/data_and_sample_submission/train_val_test_init/task1_val.hdf5
+2026-05-13 21:08:17 | INFO | [predict] device=cuda
+2026-05-13 21:08:17 | INFO | [predict] arch=DeepONet1d  trained_val_loss=0.014569282531738281
+2026-05-13 21:08:17 | INFO | [predict] input shape=(20, 200, 256)  mode=本地评估
+2026-05-13 21:08:18 | INFO | [predict] 推理 0.45s (赛题上限 120s)
+2026-05-13 21:08:18 | INFO | [predict] 前 10 步最大误差: 0.00e+00 (上限 1e-3)
+2026-05-13 21:08:18 | INFO | ----------------------------------------
+2026-05-13 21:08:18 | INFO | Seg1 [10:57]   rel_mse=0.445478  score=0.01
+2026-05-13 21:08:18 | INFO | Seg2 [57:105]  rel_mse=0.301905  score=4.88
+2026-05-13 21:08:18 | INFO | Seg3 [105:200] rmse=0.139678  lor=41.72  frech=49.47  → 49.47
+2026-05-13 21:08:18 | INFO | 🔥 total_score: 25.9583 / 100
+2026-05-13 21:08:18 | INFO | ----------------------------------------
+2026-05-13 21:08:18 | INFO | [predict] 写出 /mimer/NOBACKUP/groups/phy_geo/PDE_Agent/guandi_agent/runs/v1_deeponet/task1_pred.hdf5  shape=(20, 200, 256)
+2026-05-13 21:08:18 | INFO | ============================================================

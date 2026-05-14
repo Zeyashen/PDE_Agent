@@ -1,8 +1,8 @@
-# guandi_agent
+# PDE Neural Opeator Research agent
 
 PDE Neural Operator Research Agent — AI4S CNS Challenge Task 1 (1D Burgers).
 实现了两个模型, 更改模型：./core/config.py中更改模型配置。
-目前我们的测试使用PI-DeepONet做了8迭代的测试。logs记录./logs/agent_test.log
+目前我们的测试使用PI-DeepONet做了8迭代的测试。logs记录./logs/agent_test.log。
 To run the agent,
 bash ./run_agent.sh
 

@@ -32,3 +32,5 @@ pde_venv/
 *.tmp
 
 repos/baselines/
+task3_data_sample_submission.zip
+*.zip

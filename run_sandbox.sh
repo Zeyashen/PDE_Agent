@@ -13,6 +13,9 @@ SIF_PATH="/mimer/NOBACKUP/groups/phy_geo/PDE_Agent/env/pytorch.sif"
 VENV_ACTIVATE="/mimer/NOBACKUP/groups/phy_geo/PDE_Agent/env/pde_venv/bin/activate"
 
 apptainer exec --nv --bind /mimer:/mimer "$SIF_PATH" bash -c "
-    source \"$VENV_ACTIVATE\" && 
-    python \"$TARGET_SCRIPT\" $@
+    source \"$VENV_ACTIVATE\" &&
+    cd /mimer/NOBACKUP/groups/phy_geo/PDE_Agent &&
+    export LLM_GPUS=0 &&
+    export TRAIN_GPUS=0,1,2,3 &&
+    python \"$TARGET_SCRIPT\" $*
 "

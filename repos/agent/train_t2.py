@@ -1,8 +1,8 @@
 """
-train.py — DeepONet Task-1 训练脚本
+train_t2.py — Task 2 训练脚本
 
-新增参数：
-  --val_mix_ratio : 控制 val 前80条在训练中的采样权重（默认1.0）
+复用 Task 1 的 DeepONet 模型结构，只改数据加载部分。
+直接用 Task 1 最优 checkpoint (CNN, depth=4, width=128) 作为热启动。
 """
 
 import argparse, csv, os, sys, time, logging, sqlite3
@@ -16,13 +16,15 @@ import torch.distributed as dist
 
 ROOT     = Path(__file__).parent.parent.parent
 LOG_DIR  = ROOT / "logs"
-CKPT_DIR = ROOT / "checkpoints" / "task1_trained"
+CKPT_DIR = ROOT / "checkpoints" / "task2_trained"
 LOG_DIR.mkdir(exist_ok=True)
 CKPT_DIR.mkdir(parents=True, exist_ok=True)
 
 sys.path.insert(0, str(Path(__file__).parent))
 from model import build_model, count_params
-from dataset import make_dataloaders
+from dataset_t2 import make_task2_dataloaders
+
+DATA_DIR = ROOT / "data_and_sample_submission" / "train_val_test_init"
 
 
 def init_ddp():
@@ -42,7 +44,7 @@ def cleanup_ddp():
 
 
 def setup_logger(log_path, is_main):
-    logger = logging.getLogger("train")
+    logger = logging.getLogger("train_t2")
     logger.handlers.clear()
     logger.setLevel(logging.INFO)
     fmt = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s",
@@ -60,55 +62,38 @@ def setup_logger(log_path, is_main):
 
 
 def relative_l2_loss(pred, target):
-    diff = pred - target
-    return (diff.norm() / (target.norm() + 1e-8))
-
-
-def update_registry(db_path, exp_id, fields):
-    if not Path(db_path).exists():
-        return
-    conn = sqlite3.connect(db_path)
-    cols = ", ".join(f"{k}=?" for k in fields)
-    conn.execute(f"UPDATE experiments SET {cols} WHERE exp_id=?",
-                 list(fields.values()) + [exp_id])
-    conn.commit()
-    conn.close()
+    return (pred - target).norm() / (target.norm() + 1e-8)
 
 
 def train(args):
     rank, local_rank, world_size, is_main = init_ddp()
     device   = torch.device(f'cuda:{local_rank}'
                             if torch.cuda.is_available() else 'cpu')
-    log_path = LOG_DIR / "task1_train.log"
+    log_path = LOG_DIR / "task2_train.log"
     logger   = setup_logger(log_path, is_main)
-    db_path  = ROOT / "repos" / "agent" / "registry.db"
 
     exp_id         = args.exp_id
     ckpt_candidate = CKPT_DIR / f"{exp_id}_candidate.pt"
-    ckpt_resume    = (CKPT_DIR / f"{args.parent_id}_candidate.pt"
-                      if args.parent_id else None)
 
     if is_main:
         logger.info("=" * 60)
-        logger.info(f"训练 exp_id={exp_id}  {vars(args)}")
-        logger.info(f"DDP: world_size={world_size}")
+        logger.info(f"Task2 训练 exp_id={exp_id}")
+        logger.info(f"配置: {vars(args)}")
 
     # 数据
-    train_loader, val_loader = make_dataloaders(
-        train_hdf5    = args.data_path,
-        val_hdf5      = args.val_path,
-        batch_size    = args.batch_size,
-        n_query       = args.n_query,
-        n_samples     = args.n_samples,
-        num_workers   = args.num_workers,
-        val_train_n   = 80,
-        val_mix_ratio = args.val_mix_ratio,
-        distributed   = (world_size > 1),
-        rank          = rank,
-        world_size    = world_size,
+    train_loader, val_loader = make_task2_dataloaders(
+        data_dir    = str(DATA_DIR),
+        val_path    = str(DATA_DIR / "task2_val.h5"),
+        batch_size  = args.batch_size,
+        n_query     = args.n_query,
+        num_workers = args.num_workers,
+        val_train_n = 80,
+        distributed = (world_size > 1),
+        rank        = rank,
+        world_size  = world_size,
     )
 
-    # 模型
+    # 模型配置
     cfg = {
         "T_in": 10, "X": 256,
         "latent_dim":       args.latent_dim,
@@ -124,20 +109,43 @@ def train(args):
     start_epoch   = 1
     best_val_loss = float('inf')
 
-    if args.resume and ckpt_resume and Path(ckpt_resume).exists():
+    # 热启动：从 Task1 最优 checkpoint 加载权重
+    if args.task1_ckpt and Path(args.task1_ckpt).exists():
         if is_main:
-            logger.info(f"Resume from {ckpt_resume}")
-        ckpt = torch.load(ckpt_resume, map_location=device, weights_only=False)
+            logger.info(f"从 Task1 checkpoint 热启动: {args.task1_ckpt}")
+        ckpt = torch.load(args.task1_ckpt, map_location=device,
+                          weights_only=False)
+        saved_cfg = ckpt.get('cfg', {})
+        # 只有架构一致才能加载权重
+        if (saved_cfg.get('branch_type') == args.branch_type and
+            saved_cfg.get('branch_depth') == args.branch_depth and
+            saved_cfg.get('branch_width') == args.branch_width and
+            saved_cfg.get('latent_dim') == args.latent_dim):
+            model.load_state_dict(ckpt['model_state_dict'])
+            if is_main:
+                logger.info("Task1 权重加载成功（架构匹配）")
+        else:
+            if is_main:
+                logger.warning(
+                    f"架构不匹配，冷启动。"
+                    f"Task1: {saved_cfg.get('branch_type')} "
+                    f"d{saved_cfg.get('branch_depth')}w{saved_cfg.get('branch_width')} "
+                    f"→ Task2: {args.branch_type} "
+                    f"d{args.branch_depth}w{args.branch_width}"
+                )
+    elif args.resume and ckpt_candidate.exists():
+        if is_main:
+            logger.info(f"断点续训: {ckpt_candidate}")
+        ckpt = torch.load(ckpt_candidate, map_location=device,
+                          weights_only=False)
         model.load_state_dict(ckpt['model_state_dict'])
         start_epoch   = ckpt.get('epoch', 1) + 1
         best_val_loss = ckpt.get('val_loss', float('inf'))
         if start_epoch > args.epochs:
             args.epochs = ckpt.get('epoch', 1) + args.epochs
-        if is_main:
-            logger.info(f"从 epoch {start_epoch} 继续")
     else:
         if is_main:
-            logger.info(f"冷启动 {args.branch_type} latent={args.latent_dim} "
+            logger.info(f"冷启动: {args.branch_type} latent={args.latent_dim} "
                         f"params={count_params(model):,}")
 
     if world_size > 1:
@@ -204,6 +212,7 @@ def train(args):
                     'val_loss':         val_loss,
                     'cfg':              cfg,
                     'args':             vars(args),
+                    'task':             'task2',
                 }, ckpt_candidate)
                 marker = " <- best"
             else:
@@ -244,12 +253,6 @@ def train(args):
             logger.info(f"Candidate: {ckpt_candidate}")
         else:
             logger.warning("未产出 candidate")
-        if db_path.exists():
-            update_registry(str(db_path), exp_id, {
-                "val_loss":   best_val_loss,
-                "train_time": train_time,
-                "status":     "trained",
-            })
 
     cleanup_ddp()
     return ckpt_candidate, train_time
@@ -257,34 +260,31 @@ def train(args):
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    root = Path(__file__).parent.parent.parent
     parser.add_argument('--exp_id',    required=True)
-    parser.add_argument('--parent_id', default=None)
     parser.add_argument('--resume',    action='store_true')
-    parser.add_argument('--data_path', default=str(
-        root / 'data/1D/Burgers/Train/1D_Burgers_Sols_Nu0.001.hdf5'))
-    parser.add_argument('--val_path', default=str(
-        root / 'data_and_sample_submission/train_val_test_init/task1_val.hdf5'))
-    parser.add_argument('--n_samples',  type=int,   default=None)
-    # A类
-    parser.add_argument('--branch_type',      default='mlp',
-                        choices=['mlp','cnn','fno_encoder'])
-    parser.add_argument('--branch_depth',     type=int,   default=4)
-    parser.add_argument('--branch_width',     type=int,   default=256)
-    parser.add_argument('--trunk_depth',      type=int,   default=4)
-    parser.add_argument('--trunk_width',      type=int,   default=256)
-    parser.add_argument('--latent_dim',       type=int,   default=128)
-    parser.add_argument('--activation',       default='tanh')
-    parser.add_argument('--fourier_features', type=int,   default=64)
-    # B类
-    parser.add_argument('--epochs',        type=int,   default=50)
-    parser.add_argument('--batch_size',    type=int,   default=32)
-    parser.add_argument('--n_query',       type=int,   default=2048)
-    parser.add_argument('--lr',            type=float, default=1e-3)
-    parser.add_argument('--weight_decay',  type=float, default=1e-4)
-    parser.add_argument('--patience',      type=int,   default=15)
-    parser.add_argument('--num_workers',   type=int,   default=4)
-    parser.add_argument('--val_mix_ratio', type=float, default=1.0)
+    parser.add_argument('--task1_ckpt', default=None,
+                        help='Task1 最优 checkpoint 路径，用于热启动')
+
+    # 模型结构（A类）
+    parser.add_argument('--branch_type',      default='cnn',
+                        choices=['mlp', 'cnn', 'fno_encoder'])
+    parser.add_argument('--branch_depth',     type=int, default=4)
+    parser.add_argument('--branch_width',     type=int, default=128)
+    parser.add_argument('--trunk_depth',      type=int, default=4)
+    parser.add_argument('--trunk_width',      type=int, default=128)
+    parser.add_argument('--latent_dim',       type=int, default=128)
+    parser.add_argument('--activation',       default='gelu')
+    parser.add_argument('--fourier_features', type=int, default=64)
+
+    # 训练参数（B类）
+    parser.add_argument('--epochs',       type=int,   default=50)
+    parser.add_argument('--batch_size',   type=int,   default=32)
+    parser.add_argument('--n_query',      type=int,   default=2048)
+    parser.add_argument('--lr',           type=float, default=5e-4)
+    parser.add_argument('--weight_decay', type=float, default=1e-4)
+    parser.add_argument('--patience',     type=int,   default=15)
+    parser.add_argument('--num_workers',  type=int,   default=4)
+
     return parser.parse_args()
 
 

@@ -1,18 +1,13 @@
 """
-Agent 工具集 — PDE 科研工作流
+tools.py — Agent 工具集
 
-Agent 可以调用的所有工具函数。
-每个工具返回 {"success": bool, "result": str} 格式。
+核心变化：
+  1. propose_and_run 新增 val_mix_ratio 参数
+  2. 推理后正确写入 inference_time 到 task1_time.csv
+  3. 解析 predict 日志时补充推理时间
 """
 
-import os
-import re
-import sys
-import csv
-import json
-import time
-import shutil
-import subprocess
+import os, re, csv, json, time, random, sqlite3, subprocess
 from pathlib import Path
 from datetime import datetime
 
@@ -21,33 +16,143 @@ AGENT_DIR   = PROJECT_DIR / "repos" / "agent"
 LOG_DIR     = PROJECT_DIR / "logs"
 CKPT_DIR    = PROJECT_DIR / "checkpoints" / "task1_trained"
 SUBMISSION  = PROJECT_DIR / "repos" / "submission"
-
-SIF  = PROJECT_DIR / "env" / "pytorch.sif"
-VENV = PROJECT_DIR / "env" / "pde_venv" / "bin" / "activate"
-
-
-# ============================================================
-# 内部工具：用容器执行 Python
-# ============================================================
+DB_PATH     = AGENT_DIR / "registry.db"
 VENV_ACTIVATE = str(PROJECT_DIR / "env" / "pde_venv" / "bin" / "activate")
 
-def _run_in_container(cmd: str, timeout: int = 3600) -> dict:
-    """直接执行命令（已在容器内，无需再套 apptainer）。"""
+A_CLASS_PARAMS = {
+    "branch_type", "branch_depth", "branch_width",
+    "trunk_depth", "trunk_width", "latent_dim",
+    "activation", "fourier_features",
+}
+
+
+# ============================================================
+# Registry DB
+# ============================================================
+def init_registry():
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(DB_PATH))
+    conn.execute("""
+    CREATE TABLE IF NOT EXISTS experiments (
+        exp_id       TEXT PRIMARY KEY,
+        parent_id    TEXT,
+        task         TEXT DEFAULT 'task1',
+        status       TEXT DEFAULT 'pending',
+        init_from    TEXT,
+        branch_type      TEXT DEFAULT 'mlp',
+        branch_depth     INTEGER DEFAULT 4,
+        branch_width     INTEGER DEFAULT 256,
+        trunk_depth      INTEGER DEFAULT 4,
+        trunk_width      INTEGER DEFAULT 256,
+        latent_dim       INTEGER DEFAULT 128,
+        activation       TEXT DEFAULT 'tanh',
+        fourier_features INTEGER DEFAULT 64,
+        lr           REAL DEFAULT 0.001,
+        weight_decay REAL DEFAULT 1e-4,
+        epochs       INTEGER DEFAULT 50,
+        batch_size   INTEGER DEFAULT 32,
+        n_query      INTEGER DEFAULT 2048,
+        val_mix_ratio REAL DEFAULT 1.0,
+        data_weight    REAL DEFAULT 1.0,
+        physics_weight REAL DEFAULT 0.0,
+        seg1_score   REAL,
+        seg2_score   REAL,
+        seg3_score   REAL,
+        total_score  REAL,
+        val_loss     REAL,
+        train_time   REAL,
+        infer_time   REAL,
+        hypothesis   TEXT,
+        rationale    TEXT,
+        conclusion   TEXT,
+        inflection_step  INTEGER,
+        extrap_ratio     REAL,
+        created_at   TEXT
+    )""")
+    conn.commit()
+    conn.close()
+
+
+def get_experiment(exp_id):
+    conn = sqlite3.connect(str(DB_PATH))
+    conn.row_factory = sqlite3.Row
+    row  = conn.execute("SELECT * FROM experiments WHERE exp_id=?",
+                        (exp_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else {}
+
+
+def insert_experiment(exp):
+    conn = sqlite3.connect(str(DB_PATH))
+    cols = ", ".join(exp.keys())
+    qs   = ", ".join("?" for _ in exp)
+    conn.execute(f"INSERT OR REPLACE INTO experiments ({cols}) VALUES ({qs})",
+                 list(exp.values()))
+    conn.commit()
+    conn.close()
+
+
+def update_experiment(exp_id, fields):
+    conn = sqlite3.connect(str(DB_PATH))
+    cols = ", ".join(f"{k}=?" for k in fields)
+    conn.execute(f"UPDATE experiments SET {cols} WHERE exp_id=?",
+                 list(fields.values()) + [exp_id])
+    conn.commit()
+    conn.close()
+
+
+def get_leaderboard(task='task1', limit=20):
+    if not DB_PATH.exists():
+        return []
+    conn = sqlite3.connect(str(DB_PATH))
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute("""
+        SELECT exp_id, parent_id, status, init_from,
+               branch_type, branch_depth, branch_width,
+               trunk_depth, trunk_width, latent_dim,
+               lr, epochs, val_mix_ratio,
+               seg1_score, seg2_score, seg3_score, total_score,
+               val_loss, train_time, infer_time,
+               inflection_step, extrap_ratio,
+               hypothesis, conclusion
+        FROM experiments
+        WHERE task=? AND status IN ('done','trained')
+        ORDER BY total_score DESC NULLS LAST
+        LIMIT ?
+    """, (task, limit)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_all_structures_tested(task='task1'):
+    if not DB_PATH.exists():
+        return []
+    conn = sqlite3.connect(str(DB_PATH))
+    rows = conn.execute("""
+        SELECT DISTINCT branch_type, branch_depth, branch_width,
+                        trunk_depth, trunk_width, latent_dim
+        FROM experiments WHERE task=? AND status='done'
+    """, (task,)).fetchall()
+    conn.close()
+    return rows
+
+
+# ============================================================
+# 内部命令执行
+# ============================================================
+def _run_cmd(cmd, timeout=7200):
     try:
-        import copy
-        env = copy.copy(os.environ)
+        env = os.environ.copy()
         env.pop("CUDA_VISIBLE_DEVICES", None)
-        # 在命令前加source activate，确保torchrun在PATH里
         full_cmd = f"source {VENV_ACTIVATE} && {cmd}"
         proc = subprocess.run(
             full_cmd, shell=True, capture_output=True,
             text=True, timeout=timeout,
-            cwd=str(PROJECT_DIR), env=env,
-            executable="/bin/bash"
-        )
-        output = proc.stdout + proc.stderr
-        success = proc.returncode == 0
-        return {"success": success, "result": output.strip()}
+            cwd=str(PROJECT_DIR), env=env, executable="/bin/bash")
+        return {
+            "success": proc.returncode == 0,
+            "result":  (proc.stdout + proc.stderr).strip(),
+        }
     except subprocess.TimeoutExpired:
         return {"success": False, "result": f"超时（>{timeout}s）"}
     except Exception as e:
@@ -55,230 +160,193 @@ def _run_in_container(cmd: str, timeout: int = 3600) -> dict:
 
 
 # ============================================================
-# 工具1: 读取文件
+# 核心工具：propose_and_run
 # ============================================================
-def read_file(path: str) -> dict:
-    """
-    读取文件内容。
-    path: 相对于 PROJECT_DIR 的路径，或绝对路径。
-    """
-    try:
-        p = Path(path) if Path(path).is_absolute() else PROJECT_DIR / path
-        content = p.read_text(encoding="utf-8")
-        # 超长文件只返回前200行
-        lines = content.splitlines()
-        if len(lines) > 200:
-            content = "\n".join(lines[:200]) + f"\n... (共{len(lines)}行，已截断)"
-        return {"success": True, "result": content}
-    except Exception as e:
-        return {"success": False, "result": str(e)}
+def propose_and_run(exp_id, parent_id, changes, rationale,
+                    hypothesis="",
+                    gpu_ids=os.environ.get("TRAIN_GPUS", "0,1,2,3")):
+    init_registry()
 
+    # 继承配置
+    all_params = A_CLASS_PARAMS | {
+        "lr", "weight_decay", "epochs", "batch_size",
+        "n_query", "val_mix_ratio", "data_weight", "physics_weight"
+    }
+    if parent_id and parent_id != "scratch":
+        parent = get_experiment(parent_id)
+        if not parent:
+            return {"success": False, "result": f"parent {parent_id} 不存在"}
+        cfg = {k: parent[k] for k in all_params if k in parent}
+    else:
+        cfg = {
+            "branch_type": "mlp", "branch_depth": 4, "branch_width": 256,
+            "trunk_depth":  4,    "trunk_width":  256, "latent_dim": 128,
+            "activation": "tanh", "fourier_features": 64,
+            "lr": 1e-3, "weight_decay": 1e-4, "epochs": 50,
+            "batch_size": 32, "n_query": 2048, "val_mix_ratio": 1.0,
+            "data_weight": 1.0, "physics_weight": 0.0,
+        }
+    cfg.update(changes)
 
-# ============================================================
-# 工具2: 写入文件
-# ============================================================
-def write_file(path: str, content: str, backup: bool = True) -> dict:
-    """
-    写入文件内容。写入前自动备份原文件。
-    path: 相对于 PROJECT_DIR 的路径，或绝对路径。
-    """
-    try:
-        p = Path(path) if Path(path).is_absolute() else PROJECT_DIR / path
-        p.parent.mkdir(parents=True, exist_ok=True)
+    a_changed = bool(A_CLASS_PARAMS & set(changes.keys()))
+    init_from = "scratch" if (a_changed or not parent_id
+                              or parent_id == "scratch") else "resume"
+    if init_from == "resume":
+        if not (CKPT_DIR / f"{parent_id}_candidate.pt").exists():
+            init_from = "scratch"
 
-        # 备份原文件
-        if backup and p.exists():
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_path = p.with_suffix(f".bak_{ts}{p.suffix}")
-            shutil.copy2(p, backup_path)
+    print(f"[tools] {exp_id} parent={parent_id} init_from={init_from} "
+          f"changes={list(changes.keys())}")
 
-        p.write_text(content, encoding="utf-8")
-        return {"success": True, "result": f"已写入 {p}"}
-    except Exception as e:
-        return {"success": False, "result": str(e)}
+    insert_experiment({
+        "exp_id": exp_id, "parent_id": parent_id, "task": "task1",
+        "status": "running", "init_from": init_from,
+        "hypothesis": hypothesis, "rationale": rationale,
+        "created_at": datetime.utcnow().isoformat(),
+        **{k: cfg.get(k) for k in all_params},
+    })
 
+    # 训练命令
+    n_gpus = len(gpu_ids.split(","))
+    if n_gpus > 1:
+        port     = random.randint(29500, 30500)
+        launcher = (f"torchrun --nproc_per_node={n_gpus} "
+                    f"--master_addr=localhost --master_port={port} "
+                    f"--rdzv_backend=c10d --rdzv_endpoint=localhost:{port}")
+    else:
+        launcher = "python"
 
-# ============================================================
-# 工具3: 读取训练日志
-# ============================================================
-def read_training_log(max_lines: int = 100) -> dict:
-    """
-    读取最新的训练日志，返回关键信息。
-    """
-    log_path = LOG_DIR / "task1_train.log"
-    if not log_path.exists():
-        return {"success": False, "result": "训练日志不存在，可能还未训练"}
+    nccl = "NCCL_P2P_DISABLE=1 NCCL_IB_DISABLE=1 TORCH_NCCL_BLOCKING_WAIT=1 "
+    resume_flag = (f"--resume --parent_id {parent_id}"
+                   if init_from == "resume" else "")
 
-    lines = log_path.read_text(encoding="utf-8").splitlines()
-    # 只返回最后 max_lines 行
-    recent = lines[-max_lines:] if len(lines) > max_lines else lines
+    train_cmd = (
+        f"CUDA_VISIBLE_DEVICES={gpu_ids} {nccl}"
+        f"{launcher} repos/agent/train.py "
+        f"--exp_id {exp_id} "
+        f"--branch_type {cfg['branch_type']} "
+        f"--branch_depth {cfg['branch_depth']} "
+        f"--branch_width {cfg['branch_width']} "
+        f"--trunk_depth {cfg['trunk_depth']} "
+        f"--trunk_width {cfg['trunk_width']} "
+        f"--latent_dim {cfg['latent_dim']} "
+        f"--activation {cfg['activation']} "
+        f"--fourier_features {cfg['fourier_features']} "
+        f"--lr {cfg['lr']} "
+        f"--weight_decay {cfg['weight_decay']} "
+        f"--epochs {cfg['epochs']} "
+        f"--batch_size {cfg['batch_size']} "
+        f"--n_query {cfg['n_query']} "
+        f"--val_mix_ratio {cfg['val_mix_ratio']} "
+        f"{resume_flag}"
+    )
+    print(f"[tools] {train_cmd[:120]}...")
+    timeout = int(cfg['epochs']) * 120 + 600
+    train_r = _run_cmd(train_cmd, timeout=timeout)
 
-    # 解析关键指标
-    epochs, train_losses, val_losses, val_rel_mses = [], [], [], []
-    for line in lines:
-        m = re.search(
-            r"Epoch\s+(\d+)/\d+.*train_loss=([\d.]+).*val_loss=([\d.]+).*val_rel_mse=([\d.]+)",
-            line
-        )
-        if m:
-            epochs.append(int(m.group(1)))
-            train_losses.append(float(m.group(2)))
-            val_losses.append(float(m.group(3)))
-            val_rel_mses.append(float(m.group(4)))
+    if not train_r["success"]:
+        update_experiment(exp_id, {"status": "failed"})
+        return {"success": False,
+                "result": f"训练失败: {train_r['result'][-300:]}",
+                "exp_id": exp_id}
 
-    summary = ""
-    if epochs:
-        summary = (
-            f"\n[日志摘要]\n"
-            f"  训练轮数: {epochs[-1]}\n"
-            f"  最终 train_loss: {train_losses[-1]:.6f}\n"
-            f"  最终 val_loss:   {val_losses[-1]:.6f}\n"
-            f"  最终 val_rel_mse:{val_rel_mses[-1]:.6f}\n"
-            f"  最优 val_loss:   {min(val_losses):.6f} (Epoch {epochs[val_losses.index(min(val_losses))]})\n"
-        )
+    ckpt_path = CKPT_DIR / f"{exp_id}_candidate.pt"
+    if not ckpt_path.exists():
+        update_experiment(exp_id, {"status": "failed"})
+        return {"success": False,
+                "result": "训练完成但无 candidate（val_loss 全程未改善）",
+                "exp_id": exp_id}
+
+    # 推理评测
+    infer_cmd = (
+        f"CUDA_VISIBLE_DEVICES={gpu_ids.split(',')[0]} "
+        f"python repos/agent/predict.py "
+        f"--ckpt {ckpt_path} --val_only"
+    )
+    print(f"[tools] 推理评测...")
+    t0       = time.time()
+    infer_r  = _run_cmd(infer_cmd, timeout=300)
+    infer_t  = time.time() - t0
+
+    metrics = _parse_predict_log()
+
+    # 写入 inference_time 到 task1_time.csv
+    time_csv = SUBMISSION / "task1_time.csv"
+    train_time_saved = 0.0
+    if time_csv.exists():
+        with open(time_csv, 'r') as f:
+            for row in csv.DictReader(f):
+                train_time_saved = float(row.get('train_time', 0))
+    with open(time_csv, 'w', newline='') as f:
+        w = csv.writer(f)
+        w.writerow(['train_time', 'inference_time'])
+        w.writerow([train_time_saved, infer_t])
+
+    update_experiment(exp_id, {
+        "status":          "done",
+        "seg1_score":      metrics.get("seg1_score",       0.0),
+        "seg2_score":      metrics.get("seg2_score",       0.0),
+        "seg3_score":      metrics.get("seg3_score",       0.0),
+        "total_score":     metrics.get("total_score",      0.0),
+        "inflection_step": int(metrics.get("inflection_step", -1)),
+        "extrap_ratio":    metrics.get("extrapolation_ratio", -1.0),
+        "infer_time":      infer_t,
+    })
 
     return {
-        "success": True,
-        "result": summary + "\n[最近日志]\n" + "\n".join(recent)
+        "success":     True,
+        "exp_id":      exp_id,
+        "init_from":   init_from,
+        "total_score": metrics.get("total_score", 0.0),
+        "seg1_score":  metrics.get("seg1_score",  0.0),
+        "seg2_score":  metrics.get("seg2_score",  0.0),
+        "seg3_score":  metrics.get("seg3_score",  0.0),
+        "infer_time":  infer_t,
+        "metrics":     metrics,
     }
 
 
-# ============================================================
-# 工具4: 读取推理评测结果
-# ============================================================
-def read_eval_metrics() -> dict:
-    """
-    读取最新的推理日志，提取评测得分。
-    """
+def _parse_predict_log():
     log_path = LOG_DIR / "task1_predict.log"
     if not log_path.exists():
-        return {"success": False, "result": "推理日志不存在，请先运行 predict.py"}
-
+        return {}
     content = log_path.read_text(encoding="utf-8")
-
-    # 提取关键数字
-    metrics = {}
     patterns = {
-        "seg1_rel_mse": r"Seg1 Rel-MSE=([\d.]+)",
-        "seg1_score":   r"Seg1.*Score=([\d.]+)",
-        "seg2_rel_mse": r"Seg2 Rel-MSE=([\d.]+)",
-        "seg2_score":   r"Seg2.*Score=([\d.]+)",
-        "seg3_rmse":    r"Seg3 RMSE\s+=\s*([\d.]+)",
-        "seg3_score":   r"Seg3.*Score=([\d.]+)",
-        "total_score":  r"预测得分[^\d]*([\d.]+)",
-        "infer_time":   r"推理完成，耗时:\s*([\d.]+)s",
+        "seg1_score":          r"Seg1.*Score=([\d.]+)",
+        "seg2_score":          r"Seg2.*Score=([\d.]+)",
+        "seg3_score":          r"-> \w+=([\d.]+)",
+        "total_score":         r"预测得分:\s*([\d.]+)",
+        "t2s_mean_error":      r"训练覆盖区误差=([\d.]+)",
+        "t10s_mean_error":     r"外推区误差=([\d.]+)",
+        "extrapolation_ratio": r"外推/覆盖比=([\d.]+)x",
+        "inflection_step":     r"拐点步=(\d+)",
     }
-    for key, pattern in patterns.items():
-        matches = re.findall(pattern, content)
-        if matches:
-            metrics[key] = float(matches[-1])  # 取最后一个，确保是最新结果
-
-    if not metrics:
-        return {"success": False, "result": "无法解析评测指标，日志格式可能有问题"}
-
-    result = (
-        f"[当前评测结果]\n"
-        f"  Seg1 Rel-MSE={metrics.get('seg1_rel_mse','N/A'):.4f}  Score={metrics.get('seg1_score','N/A'):.2f}\n"
-        f"  Seg2 Rel-MSE={metrics.get('seg2_rel_mse','N/A'):.4f}  Score={metrics.get('seg2_score','N/A'):.2f}\n"
-        f"  Seg3 RMSE   ={metrics.get('seg3_rmse','N/A'):.4f}  Score={metrics.get('seg3_score','N/A'):.2f}\n"
-        f"  总分: {metrics.get('total_score','N/A'):.4f} / 100\n"
-        f"  推理耗时: {metrics.get('infer_time','N/A'):.2f}s\n"
-    )
-    return {"success": True, "result": result, "metrics": metrics}
+    result = {}
+    for key, pat in patterns.items():
+        m = re.findall(pat, content)
+        if m:
+            result[key] = float(m[-1])
+    return result
 
 
 # ============================================================
-# 工具5: 运行训练
+# 辅助
 # ============================================================
-def run_training(
-    epochs=50, batch_size=64, modes=16, width=64, lr=1e-3,
-    extra_args="",
-    gpu_ids=os.environ.get("TRAIN_GPUS", "0,1,2,3"),
-):
-    """
-    启动 DDP 训练。
-    - 4卡 A40：torchrun，随机端口避免多轮冲突
-    - 单卡：直接 python
-    A40 NCCL 推荐设置全部内置，不需要外部配置。
-    """
-    import random
-    n_gpus = len(gpu_ids.split(","))
-
-    if n_gpus > 1:
-        master_port = random.randint(29500, 30500)
-        launcher = (
-            f"torchrun "
-            f"--nproc_per_node={n_gpus} "
-            f"--master_addr=localhost "
-            f"--master_port={master_port} "
-            f"--rdzv_backend=c10d "
-            f"--rdzv_endpoint=localhost:{master_port}"
-        )
-    else:
-        master_port = None
-        launcher    = "python"
-
-    # A40 多卡 DDP 稳定性设置
-    nccl_env = (
-        "NCCL_P2P_DISABLE=1 "       # 禁用 P2P，A40 驱动兼容性更好
-        "NCCL_IB_DISABLE=1 "        # 单节点不需要 InfiniBand
-        "TORCH_NCCL_BLOCKING_WAIT=1 "  # 超时报错而不是卡死
-    )
-
-    cmd = (
-        f"CUDA_VISIBLE_DEVICES={gpu_ids} {nccl_env}"
-        f"{launcher} repos/agent/train.py "
-        f"--epochs {epochs} "
-        f"--batch_size {batch_size} "
-        f"--modes {modes} "
-        f"--width {width} "
-        f"--lr {lr} "
-        f"{extra_args}"
-    )
-    port_info = f"port={master_port}" if master_port else "单卡"
-    print(f"[tools] 启动训练 ({n_gpus}卡 {port_info}): {cmd[:120]}...")
-
-    timeout = (epochs * 120) + 600
-    return _run_in_container(cmd, timeout=timeout)
+def read_training_log(max_lines=80):
+    log_path = LOG_DIR / "task1_train.log"
+    if not log_path.exists():
+        return {"success": False, "result": "训练日志不存在"}
+    lines  = log_path.read_text(encoding="utf-8").splitlines()
+    recent = lines[-max_lines:] if len(lines) > max_lines else lines
+    return {"success": True, "result": "\n".join(recent)}
 
 
-# ============================================================
-# 工具6: 运行推理评测
-# ============================================================
-def run_inference(gpu_ids: str = os.environ.get("TRAIN_GPUS", "2,3")) -> dict:
-    """运行推理并生成提交文件。"""
-    cmd = f"CUDA_VISIBLE_DEVICES={gpu_ids} python repos/agent/predict.py"
-    print(f"[tools] 启动推理: {cmd}")
-    return _run_in_container(cmd, timeout=300)
-
-
-# ============================================================
-# 工具7: 追加科研日志
-# ============================================================
-# 记录日志起始时间（用于计算 elapsed_seconds）
-_LOG_START_TIME = {}
-
-def append_research_log(content: str, log_name: str = "task1_logs.log",
-                        tool_calls: str = None) -> dict:
-    """
-    向科研日志追加一行内容。
-    content 已经是组装好的 JSON 字符串（由 orchestrator._log() 负责组装）。
-    tool_calls 参数保留但忽略（兼容旧接口）。
-    """
+def append_research_log(content, log_name="task1_logs.log"):
     log_path = SUBMISSION / log_name
     log_path.parent.mkdir(parents=True, exist_ok=True)
     try:
         with open(log_path, "a", encoding="utf-8") as f:
             f.write(content + "\n")
-        return {"success": True, "result": f"已追加到 {log_path}"}
+        return {"success": True}
     except Exception as e:
         return {"success": False, "result": str(e)}
-
-def call_tool(tool_name: str, kwargs: dict) -> dict:
-    """统一工具调用入口。"""
-    if tool_name not in TOOL_MAP:
-        return {"success": False, "result": f"未知工具: {tool_name}"}
-    try:
-        return TOOL_MAP[tool_name](**kwargs)
-    except Exception as e:
-        return {"success": False, "result": f"工具执行异常: {e}"}

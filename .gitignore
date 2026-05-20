@@ -22,6 +22,7 @@ __pycache__/
 *.pyc
 .venv/
 pde_venv/
+agent_venv/
 
 # 包含 guandi 的所有内容
 *guandi*
@@ -30,6 +31,7 @@ pde_venv/
 # 其他
 *.bak_*
 *.tmp
+tmp/
 
 repos/baselines/
 task3_data_sample_submission.zip

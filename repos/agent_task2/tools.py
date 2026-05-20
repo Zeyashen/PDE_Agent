@@ -19,7 +19,7 @@ from datetime import datetime
 # ── 路径常量 ────────────────────────────────────────────────
 PROJECT_DIR  = Path("/mimer/NOBACKUP/groups/phy_geo/PDE_Agent")
 WORKSPACE    = PROJECT_DIR / "repos" / "workspace"
-SKILLS_DIR   = PROJECT_DIR / "repos" / "skills"
+SKILLS_DIR   = PROJECT_DIR / "repos" / "skills_task2"
 SUBMISSION   = PROJECT_DIR / "repos" / "submission"
 LOG_DIR      = PROJECT_DIR / "logs"
 SIF          = "/apps/containers/vLLM/vllm-0.19.1.sif"
@@ -320,7 +320,7 @@ def run_training(
         "best_epoch":      parsed.get("best_epoch"),
         "elapsed_seconds": result["elapsed"],
         "ckpt_path":       parsed.get("ckpt_path",
-                           str(WORKSPACE / "checkpoints" / "best.pt")),
+                           str(WORKSPACE / "checkpoints" / "task2_best.pt")),
         "log_tail":        log_summary,
         "error":           (result["stderr"] or stdout)[-500:] if not success else "",
         "live_log_path":   str(live_log),
@@ -393,7 +393,7 @@ def full_eval(
     建议：先 quick_eval 确认 val_loss OK，再 full_eval 确认真实得分。
     """
     if ckpt_path in ("ckpt_path", "", None):
-        ckpt_path = "checkpoints/best.pt"
+        ckpt_path = "checkpoints/task2_best.pt"
     if script in ("script", "", None):
         script = "predict.py"
     clean_script = script
@@ -530,7 +530,7 @@ def _parse_training_output(text: str) -> dict:
     if m:
         result["ckpt_path"] = m.group(1)
     else:
-        result["ckpt_path"] = "workspace/checkpoints/best.pt"
+        result["ckpt_path"] = "workspace/checkpoints/task2_best.pt"
     return result
 
 

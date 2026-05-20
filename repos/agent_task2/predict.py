@@ -7,11 +7,12 @@ import h5py
 from model import DeepONet
 from dataset import load_eval_data, load_test_data
 
-PRED_PATH = "/mimer/NOBACKUP/groups/phy_geo/PDE_Agent/repos/submission/task1_pred.hdf5"
+PRED_PATH = "/mimer/NOBACKUP/groups/phy_geo/PDE_Agent/repos/submission/task2_pred.hdf5"
 
 
 def eval_scores(pred, gt):
-    """计算 Seg1/Seg2/Seg3 得分。pred, gt: (N, 200, 256)"""
+    """计算 Seg1/Seg2/Seg3 得分。pred, gt: (N, 210, 256)"""
+    # 跳过前10步初始条件，只评估后200步
     p = pred[:, 10:, :]
     g = gt[:,  10:, :]
 
@@ -47,25 +48,28 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     ckpt   = torch.load(args.ckpt, map_location=device, weights_only=False)
     model  = DeepONet(
-        latent_dim   = ckpt.get("latent_dim",   128),
         branch_type  = ckpt.get("branch_type",  "cnn"),
+        latent_dim   = ckpt.get("latent_dim",   128),
         branch_depth = ckpt.get("branch_depth", 4),
         branch_width = ckpt.get("branch_width", 128),
         trunk_depth  = ckpt.get("trunk_depth",  4),
         trunk_width  = ckpt.get("trunk_width",  256),
+        nu_dim       = ckpt.get("nu_dim",       0),
     ).to(device)
     model.load_state_dict(ckpt["model_state_dict"])
     model.eval()
-    print(f"模型加载成功 val_loss={ckpt.get('val_loss', 'N/A')}")
+    print(f"模型加载成功 val_loss={ckpt.get('val_loss', 'N/A')} nu_dim={ckpt.get('nu_dim', 0)}")
 
-    val_gt   = load_eval_data()
-    val_init = torch.tensor(val_gt[:, :10, :], dtype=torch.float32).to(device)
+    # ── 验证集评分 ────────────────────────────────────────────
+    val_gt, val_nu = load_eval_data()   # (20, 210, 256), (20,)
+    val_init = torch.tensor(
+        val_gt[:, :10, :], dtype=torch.float32).to(device)
 
     t0         = time.time()
-    val_pred   = model.predict_full(val_init)
+    val_pred   = model.predict_full(val_init, t_steps=200)   # (20, 200, 256)
     infer_time = time.time() - t0
 
-    result = np.zeros((20, 200, 256), dtype=np.float32)
+    result = np.zeros((20, 210, 256), dtype=np.float32)
     result[:, :10, :] = val_gt[:, :10, :]
     result[:, 10:, :] = val_pred
     eval_scores(result, val_gt)
@@ -74,15 +78,16 @@ def main():
     if args.val_only:
         return
 
-    test_data = load_test_data()
+    # ── 测试集推理（生成提交文件）────────────────────────────
+    test_data = load_test_data()        # (1000, 10, 256)
     test_init = torch.tensor(test_data, dtype=torch.float32).to(device)
 
     t0         = time.time()
-    test_pred  = model.predict_full(test_init)
+    test_pred  = model.predict_full(test_init, t_steps=200)  # (1000, 200, 256)
     infer_time = time.time() - t0
     print(f"推理完成 {infer_time:.2f}s (1000样本)")
 
-    pred_submit = np.zeros((1000, 200, 256), dtype=np.float32)
+    pred_submit = np.zeros((1000, 210, 256), dtype=np.float32)
     pred_submit[:, :10, :] = test_data
     pred_submit[:, 10:, :] = test_pred
 

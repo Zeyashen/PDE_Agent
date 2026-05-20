@@ -11,24 +11,31 @@ from ddp_runner import (
     save_checkpoint, make_logger,
 )
 
-CKPT_PATH = "/mimer/NOBACKUP/groups/phy_geo/PDE_Agent/repos/workspace/checkpoints/best.pt"
+CKPT_PATH = "/mimer/NOBACKUP/groups/phy_geo/PDE_Agent/repos/workspace/checkpoints/task2_best.pt"
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--epochs",        type=int,   default=50)
+    # ── Agent 可调整的超参数 ──────────────────────────────────
+    parser.add_argument("--epochs",        type=int,   default=100)
     parser.add_argument("--batch_size",    type=int,   default=32)
     parser.add_argument("--lr",            type=float, default=1e-3)
-    parser.add_argument("--patience",      type=int,   default=15)
+    parser.add_argument("--patience",      type=int,   default=20)
     parser.add_argument("--n_query",       type=int,   default=2048)
     parser.add_argument("--val_mix_ratio", type=float, default=2.0)
     parser.add_argument("--n_val_mix",     type=int,   default=80)
     parser.add_argument("--n_samples",     type=int,   default=None)
+    # 模型架构
     parser.add_argument("--branch_type",   default="cnn")
     parser.add_argument("--latent_dim",    type=int,   default=128)
     parser.add_argument("--branch_depth",  type=int,   default=4)
     parser.add_argument("--branch_width",  type=int,   default=128)
     parser.add_argument("--trunk_depth",   type=int,   default=4)
     parser.add_argument("--trunk_width",   type=int,   default=256)
+    # Nu 条件化（Task2 特有）
+    # nu_dim=0: 不使用 Nu（默认）
+    # nu_dim=1: 启用 Nu 条件化 + Nu Dropout
+    parser.add_argument("--nu_dim",        type=int,   default=0)
+    parser.add_argument("--nu_dropout",    type=float, default=0.3)
     args = parser.parse_args()
 
     ctx    = DDPContext()
@@ -54,6 +61,7 @@ def main():
         branch_width=args.branch_width,
         trunk_depth=args.trunk_depth,
         trunk_width=args.trunk_width,
+        nu_dim=args.nu_dim,
     )
     model     = ctx.wrap(model)
     optimizer = Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)
@@ -68,12 +76,23 @@ def main():
         model.train()
         train_loss = 0.0
 
-        for u0, coords, u_gt in train_loader:
+        for u0, coords, u_gt, nu in train_loader:
             u0     = u0.to(ctx.device)
             coords = coords.to(ctx.device)
             u_gt   = u_gt.to(ctx.device)
+            nu     = nu.to(ctx.device)
             optimizer.zero_grad()
-            pred = model(u0, coords)
+
+            # Nu Dropout：随机把部分样本的 Nu 置 0
+            # nu_dim=0 时 nu 传入模型会被忽略，不影响结果
+            if args.nu_dim > 0 and args.nu_dropout > 0:
+                mask = (torch.rand(nu.shape[0], device=ctx.device)
+                        > args.nu_dropout).float()
+                nu_input = nu * mask
+            else:
+                nu_input = nu
+
+            pred = model(u0, coords, nu=nu_input if args.nu_dim > 0 else None)
 
             # ===== AGENT_LOSS_BEGIN =====
             loss = (pred - u_gt).norm() / (u_gt.norm() + 1e-8)
@@ -90,11 +109,12 @@ def main():
             raw.eval()
             val_loss = 0.0
             with torch.no_grad():
-                for u0, coords, u_gt in val_loader:
+                for u0, coords, u_gt, nu in val_loader:
                     u0     = u0.to(ctx.device)
                     coords = coords.to(ctx.device)
                     u_gt   = u_gt.to(ctx.device)
-                    pred   = raw(u0, coords)
+                    # 验证时不传 Nu（模拟推理条件）
+                    pred   = raw(u0, coords, nu=None)
                     val_loss += ((pred - u_gt).norm() /
                                  (u_gt.norm() + 1e-8)).item()
             val_loss /= max(len(val_loader), 1)
@@ -102,20 +122,23 @@ def main():
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
                 no_improve    = 0
-                save_checkpoint(raw, epoch, val_loss, extra={
-                    "latent_dim":   args.latent_dim,
-                    "branch_type":  args.branch_type,
-                    "branch_depth": args.branch_depth,
-                    "branch_width": args.branch_width,
-                    "trunk_depth":  args.trunk_depth,
-                    "trunk_width":  args.trunk_width,
-                })
+                save_checkpoint(raw, epoch, val_loss,
+                                ckpt_path=CKPT_PATH,
+                                extra={
+                                    "nu_dim":       args.nu_dim,
+                                    "branch_type":  args.branch_type,
+                                    "latent_dim":   args.latent_dim,
+                                    "branch_depth": args.branch_depth,
+                                    "branch_width": args.branch_width,
+                                    "trunk_depth":  args.trunk_depth,
+                                    "trunk_width":  args.trunk_width,
+                                })
                 marker = " <- best"
             else:
                 no_improve += 1
                 marker = f" (no improve {no_improve}/{args.patience})"
 
-            if epoch == 1 or epoch % 5 == 0 or epoch == args.epochs:
+            if epoch == 1 or epoch % 10 == 0 or epoch == args.epochs:
                 logger.info(f"Epoch {epoch:4d}/{args.epochs} "
                             f"train={train_loss:.6f} "
                             f"val={val_loss:.6f}{marker}")

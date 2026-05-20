@@ -26,7 +26,7 @@ def main():
     parser.add_argument("--branch_type",   default="cnn")
     parser.add_argument("--latent_dim",    type=int,   default=128)
     parser.add_argument("--branch_depth",  type=int,   default=4)
-    parser.add_argument("--branch_width",  type=int,   default=128)
+    parser.add_argument("--branch_width",  type=int,   default=256)
     parser.add_argument("--trunk_depth",   type=int,   default=4)
     parser.add_argument("--trunk_width",   type=int,   default=256)
     args = parser.parse_args()

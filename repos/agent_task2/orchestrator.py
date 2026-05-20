@@ -24,11 +24,11 @@ from datetime import datetime, timezone
 
 # ── 路径 ────────────────────────────────────────────────────
 PROJECT_DIR = Path("/mimer/NOBACKUP/groups/phy_geo/PDE_Agent")
-AGENT_DIR   = PROJECT_DIR / "repos" / "agent"
-SKILLS_DIR  = PROJECT_DIR / "repos" / "skills"
+AGENT_DIR   = PROJECT_DIR / "repos" / "agent_task2"
+SKILLS_DIR  = PROJECT_DIR / "repos" / "skills_task2"
 WORKSPACE   = PROJECT_DIR / "repos" / "workspace"
 SUBMISSION  = PROJECT_DIR / "repos" / "submission"
-LOG_DIR     = PROJECT_DIR / "logs" / "task1"
+LOG_DIR     = PROJECT_DIR / "logs" / "task2"
 
 sys.path.insert(0, str(AGENT_DIR))
 from tools import (
@@ -55,9 +55,26 @@ WORKSPACE.mkdir(parents=True, exist_ok=True)
 # ============================================================
 # System Prompt
 # ============================================================
-SYSTEM_PROMPT_TASK1 = """你是一个 AI 科学家，目标是为 1D Burgers 方程（Nu=0.001）编写高精度长时预测代码，并通过实验持续优化。
+SYSTEM_PROMPT_TASK2 = """你是一个 AI 科学家，目标是为 1D Burgers 方程（多粘性系数 Nu 泛化）编写高精度预测代码，并通过实验持续优化。
 
-你需要自主完成：从零编写所有代码 → 训练模型 → 评估结果 → 分析瓶颈 → 改进代码 → 循环迭代。
+你需要自主完成：训练模型 → 评估结果 → 分析瓶颈 → 改进代码 → 循环迭代。
+
+## 任务特点（与 Task1 的关键区别）
+
+- 训练数据包含多种 Nu 值（0.0001~0.01），每个样本有对应的 Nu 标签
+- 测试时不提供 Nu 值，模型必须仅基于初始条件预测
+- 训练时间不计入评测，但总时长必须 ≤ 12 小时
+- 推理时间必须 < 2 分钟（否则该任务得 0 分）
+- 禁止使用任何公开预训练权重，必须从头训练
+
+## 核心科研问题
+
+如何让模型在训练时利用 Nu 信息，但推理时仅用初始条件就能泛化到未知 Nu？
+
+可探索的方向：
+1. 忽略 Nu：直接用初始条件训练，让模型隐式学习 Nu 的影响
+2. Nu 作为条件输入：训练时将 Nu 编码进 branch net，推理时用初始条件预测 Nu 再输入
+3. Nu 作为辅助监督：多任务学习，同时预测轨迹和 Nu 值
 
 ## 可用工具
 
@@ -73,7 +90,7 @@ SYSTEM_PROMPT_TASK1 = """你是一个 AI 科学家，目标是为 1D Burgers 方
   check_process(pid, tail_n)                       ★ 检查后台进程状态 + 日志末尾
   run_training(script, extra_args, epochs, n_gpus) 封装DDP训练（同步）
   smoke_test(script)                               ★ 单batch快速验证代码能否跑通（30-60秒）
-  full_eval(ckpt_path)                              完整评估：Seg1/2/3 真实得分
+  full_eval(ckpt_path)                             完整评估：Seg1/2/3 真实得分
 
 工作记忆（重要）：
   todo_write(todos)                  ★ 写任务列表，避免遗忘
@@ -85,30 +102,28 @@ SYSTEM_PROMPT_TASK1 = """你是一个 AI 科学家，目标是为 1D Burgers 方
   check_remaining_time()             查看剩余时间预算
 
 ## Skill 文档（按需读取）
-  skills/workflow.md  ★★ train.py 和 predict.py 模板（第一轮必读）
-  skills/paths.md          ★ 所有路径常量
-  skills/scoring.md        评分规则和公式
-  skills/data_format.md    数据路径和格式
-  skills/ddp_training.md   DDP训练规范
-  skills/deeponet.md       模型设计指南和已知结论
-  skills/experiment_log.md 历史实验积累
+
+★★★ 第一轮必须读且只读这一个：
+  skills/workflow.md  ← 包含完整模板、标准工作流、诊断建议
+
+按需查阅（第二轮以后）：
+  skills/ddp_runner_api.md  DDP 接口规范
+  skills/tools_api.md       工具调用规范
+  skills/scoring.md         评分规则和公式
+  skills/deeponet.md        超参调优建议
+  skills/data_format.md     Task2 数据路径和格式（含 Nu 标签说明）
+  skills/experiment_log.md  历史实验记录
 
 ## 工作规范
-- 第一轮必须先 read_file("skills/paths.md") 获取所有路径常量
-- 所有代码必须通过 write_file 或 edit_file 写入 workspace/
-- write_file 的 path 参数只传文件名，如 "model.py"，不加任何前缀
-- run_training 的 script 参数只传文件名，如 "train.py"
-- 代码中的数据路径必须使用 skills/paths.md 里的绝对路径
-- 调用 read_file 后，必须在下一轮再调用 edit_file，不能在同一轮同时调用
-- 每轮只做当前最重要的1-3件事，不要一次做太多
+- 第一轮：smoke_test("train.py") 验证初始代码，通过后直接训练
+- 每次只改一个地方，验证通过再改下一个
 - 修改代码后必须先 smoke_test 验证，通过后才能正式训练
-- 推荐工作流：write_file → smoke_test → run_training → quick_eval → full_eval
-- 第一轮建议先 todo_write 列出完整任务清单，每完成一项更新状态
-- model.py 和 dataset.py 已由框架层提供，不要写这两个文件
+- 推荐工作流：smoke_test → run_training → full_eval → 诊断 → 改进 → 循环
+- model.py、dataset.py、ddp_runner.py 已由框架层提供，直接 import，不要自己写
 - 只能写 train.py 和 predict.py
 - 推理时间必须 < 2分钟（否则该任务0分）
-- 长训练（Task2）可用 run_bash_async 后台启动，用 check_process 监控
-- 时间预算55分钟（含思考时间），预算耗尽前必须完成最终评估
+- 总训练时间必须 ≤ 12 小时
+- 禁止加载任何公开预训练权重
 
 ## 输出格式（严格遵守，违反会导致执行失败）
 <think>
@@ -155,7 +170,7 @@ def main():
     data       = json.load(open(in_f, encoding="utf-8"))
     system_p   = data["system_prompt"]
     messages   = data["messages"]
-    max_tokens = data.get("max_tokens", 10000)
+    max_tokens = data.get("max_tokens", 20000)
 
     # 用 transformers tokenizer 渲染 chat template
     tokenizer = AutoTokenizer.from_pretrained(model_path)
@@ -226,7 +241,7 @@ def _log(content: str, log_name: str, tool_calls=None):
 # ============================================================
 
 def llm_call(messages: list, model_path: str,
-             max_tokens: int = 10000, task: str = "task1",
+             max_tokens: int = 20000, task: str = "task2",
              n_llm_gpus: int = None) -> str | None:
     """
     vLLM 子进程离线推理。每轮启动子进程，推理完毕显存完全释放，
@@ -492,7 +507,7 @@ train.py 和 predict.py 已由框架层自动写入 workspace/，你无需从头
   --val_mix_ratio, --n_val_mix, --n_query
 
 路径规范：
-  checkpoint: /mimer/NOBACKUP/groups/phy_geo/PDE_Agent/repos/workspace/checkpoints/{task}_best.pt
+  checkpoint: /mimer/NOBACKUP/groups/phy_geo/PDE_Agent/repos/workspace/checkpoints/best.pt
   预测结果:   /mimer/NOBACKUP/groups/phy_geo/PDE_Agent/repos/submission/{task}_pred.hdf5
 """.strip()
 
@@ -530,7 +545,7 @@ def build_observation(iteration: int, last_results: list,
     # 判断当前 Phase 并给出建议工具调用
     has_train_py   = (WORKSPACE / "train.py").exists()
     has_predict_py = (WORKSPACE / "predict.py").exists()
-    has_ckpt       = (WORKSPACE / "checkpoints" / "task1_best.pt").exists()
+    has_ckpt       = (WORKSPACE / "checkpoints" / "best.pt").exists()
     todos_file     = WORKSPACE / "todos.json"
 
     # 追踪代码状态：上一轮是否修改了代码且未验证
@@ -590,15 +605,17 @@ def build_observation(iteration: int, last_results: list,
                    "run_training('train.py', epochs=10, n_gpus=4)")
     else:
         phase   = "Phase 3-4: 评估 + 诊断 + 改进"
-        # suggest = ("quick_eval('checkpoints/task1_best.pt') -> "
-        #            "full_eval('checkpoints/task1_best.pt') -> 根据得分用 edit_file 改超参\n"
+        # suggest = ("quick_eval('checkpoints/best.pt') -> "
+        #            "full_eval('checkpoints/best.pt') -> 根据得分用 edit_file 改超参\n"
         #            "★ 改超参更简单：run_training('train.py', extra_args='--lr 0.0005 --latent_dim 256')\n"
         #            "★ edit_file 的 old_str 必须从 read_file 返回内容里逐字复制，不能凭记忆写")
 
-        suggest = ("★ 每轮训练后必须 full_eval('checkpoints/task1_best.pt') 获取真实得分\\n"
-                   "★ 改超参最简单：run_training('train.py', extra_args='--lr 0.0005 --latent_dim 256 --epochs 50')\\n"
-                   "★ 不要修改 predict.py，只改 train.py 的超参\\n"
-                   "★ edit_file 的 old_str 必须从 read_file 返回内容里逐字复制，不能凭记忆写\\n"
+        suggest = ("★ 每轮训练后必须 full_eval('checkpoints/task2_best.pt') 获取真实得分\n"
+                   "★ Nu条件化（推荐）：--nu_dim 1 启用，--nu_dropout 0.3 控制随机遮蔽比例\n"
+                   "  训练时30%概率把Nu置0，让模型同时学会有Nu和无Nu两种情况，推理时更鲁棒\n"
+                   "★ 推荐命令：run_training('train.py', extra_args='--nu_dim 1 --nu_dropout 0.3 --lr 0.0005 --latent_dim 256 --epochs 100')\n"
+                   "★ 不要修改 predict.py，只改 train.py 的超参\n"
+                   "★ edit_file 的 old_str 必须从 read_file 返回内容里逐字复制，不能凭记忆写\n"
                    "诊断：Seg1低→加大branch_width/latent_dim  Seg3低→加大n_val_mix/val_mix_ratio")
 
 
@@ -690,12 +707,12 @@ def execute_round(tool_calls: list, budget_minutes: float,
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--task",           default="task1",
+    parser.add_argument("--task",           default="task2",
                         choices=["task1", "task2"])
-    parser.add_argument("--budget_minutes", type=float, default=55.0)
+    parser.add_argument("--budget_minutes", type=float, default=600.0)
     parser.add_argument("--model_path",
                         default=str(PROJECT_DIR / "models" / "Llama"))
-    parser.add_argument("--max_tokens",     type=int, default=10000)
+    parser.add_argument("--max_tokens",     type=int, default=20000)
     parser.add_argument("--reset",          action="store_true")
     args = parser.parse_args()
 
@@ -862,7 +879,7 @@ def main():
 
     # ── 强制最终提交（循环结束后必跑，生成提交文件并记录推理时间）──
     final_infer_time = 0.0
-    ckpt_file = WORKSPACE / "checkpoints" / "task1_best.pt"
+    ckpt_file = WORKSPACE / "checkpoints" / "best.pt"
     if ckpt_file.exists():
         logger.info("运行最终提交：full_eval(val_only=False)...")
         import gc as _gc
@@ -875,7 +892,7 @@ def main():
         time.sleep(3)  # 等待显存释放
         os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
         from tools import full_eval as _full_eval
-        _r = _full_eval(ckpt_path="checkpoints/task1_best.pt", val_only=False, timeout=120)
+        _r = _full_eval(ckpt_path="checkpoints/best.pt", val_only=False, timeout=120)
         if _r.get("success"):
             final_infer_time = _r.get("infer_time", 0.0)
             s = _r.get("total_score", 0.0)
@@ -891,33 +908,26 @@ def main():
     # ── 最终汇总 ──────────────────────────────────────────────
     total_elapsed = (time.time() - AGENT_START_TIME) / 60
 
-    if total_elapsed <= 60:   time_score = 35
-    elif total_elapsed <= 120: time_score = 25
-    elif total_elapsed <= 300: time_score = 20
-    elif total_elapsed <= 500: time_score = 10
-    else:                      time_score = 0
-
-    # 推理时间分
+    # Task2：只有精度分和推理时间分，训练时间不计分
     infer_min = final_infer_time / 60
     if infer_min <= 0:    infer_score = 40
     elif infer_min < 2:   infer_score = round(40 * (1 - infer_min / 2), 1)
     else:                 infer_score = 0
 
     precision_score = best_score * 0.75
-    total_task1     = precision_score + time_score + infer_score
+    total_task2     = precision_score + infer_score
 
     logger.info("=" * 65)
     logger.info(f"Agent 完成 | 最优: {best_score:.2f}/100")
     logger.info(f"精度分: {precision_score:.2f}/75")
-    logger.info(f"训练时间分: {time_score}/35 ({total_elapsed:.1f}min)")
     logger.info(f"推理时间分: {infer_score}/40 ({final_infer_time:.2f}s)")
-    logger.info(f"Task1 总分预测: {total_task1:.1f}/150")
+    logger.info(f"Task2 总分预测: {total_task2:.1f}/115")
     logger.info("=" * 65)
 
     _log(
         content=(f"Agent 完成 | 最优={best_score:.2f}/100 | "
                  f"精度分={precision_score:.2f}/75 | "
-                 f"时间分={time_score}/35 ({total_elapsed:.1f}min)"),
+                 f"推理时间分={infer_score}/40 ({final_infer_time:.2f}s)"),
         log_name=log_name,
     )
 
